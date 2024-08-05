@@ -27,6 +27,7 @@ module RenderState where
 import Data.Array ( (//), listArray, Array, elems )
 import Data.Foldable ( foldl' )
 
+
 -- A point is just a tuple of integers.
 type Point = (Int, Int)
 
@@ -51,8 +52,9 @@ data RenderState   = RenderState {board :: Board, gameOver :: Bool} deriving Sho
 
 -- | Given The board info, this function should return a board with all Empty cells
 emptyGrid :: BoardInfo -> Board
-emptyGrid = undefined
-
+emptyGrid (BoardInfo h w) = listArray boardBounds emptyCells
+    where boardBounds =  ((1, 1), (h, w))
+          emptyCells  = replicate (h*w) Empty
 {- 
 This is a test for emptyGrid. It should return 
 array ((1,1),(2,2)) [((1,1),Empty),((1,2),Empty),((2,1),Empty),((2,2),Empty)]
@@ -66,8 +68,9 @@ buildInitialBoard
   -> Point     -- ^ initial point of the snake
   -> Point     -- ^ initial Point of the apple
   -> RenderState
-buildInitialBoard = undefined
-
+buildInitialBoard bInfo initSnake initApple = 
+  RenderState b False 
+ where b = emptyGrid bInfo // [(initSnake, SnakeHead), (initApple, Apple)]
 {- 
 This is a test for buildInitialBoard. It should return 
 RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1),Empty),((2,2),Apple)], gameOver = False}
@@ -77,8 +80,10 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 
 -- | Given tye current render state, and a message -> update the render state
 updateRenderState :: RenderState -> RenderMessage -> RenderState
-updateRenderState = undefined
-
+updateRenderState (RenderState b gOver) message = 
+  case message of
+    RenderBoard delta -> RenderState (b // delta) gOver
+    GameOver          -> RenderState b  True
 {-
 This is a test for updateRenderState
 
@@ -104,13 +109,24 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 --     Apple -> "X "
 --   In other to avoid shrinking, I'd recommend to use some charachter followed by an space.
 ppCell :: CellType -> String
-ppCell = undefined
-
+ppCell Empty     = "- "
+ppCell Snake     = "0 "
+ppCell SnakeHead = "$ "
+ppCell Apple     = "X "
 
 -- | convert the RenderState in a String ready to be flushed into the console.
 --   It should return the Board with a pretty look. If game over, return the empty board.
 render :: BoardInfo -> RenderState -> String
-render = undefined
+render binf@(BoardInfo h w) (RenderState b gOver) =
+ if gOver
+    then fst $ boardToString(emptyGrid binf)
+    else fst $ boardToString b
+  where 
+    boardToString =  foldl' fprint ("", 0)
+    fprint (!s, !i) cell = 
+      if ((i + 1) `mod` w) == 0 
+        then (s <> ppCell cell <> "\n", i + 1 )
+        else (s <> ppCell cell , i + 1)
 
 {-
 This is a test for render. It should return:
