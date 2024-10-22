@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf #-}
 {-|
 This module defines the logic of the game and the communication with the `Board.RenderState`
 -}
@@ -45,9 +46,9 @@ opositeMovement West = East
 -- | Purely creates a random point within the board limits
 --   You should take a look to System.Random documentation. 
 --   Also, in the import list you have all relevant functions.
-makeRandomPoint :: BoardInfo -> StdGen -> (Point, StdGen)
-makeRandomPoint (BoardInfo n i) sg = (newPoint , g1')
-  where (g1, g2)  = split sg
+makeRandomPoint :: BoardInfo -> GameState -> (Point, GameState)
+makeRandomPoint (BoardInfo n i) gstate = (newPoint , gstate{randomGen = g1'})
+  where (g1, g2)  = split (randomGen gstate)
         (n', g1') = uniformR (1, n) g1
         (i', _) = uniformR (1, i) g2
         newPoint  = (n', i')
@@ -98,14 +99,31 @@ True
 
 
 -- | Calculates a new random apple, avoiding creating the apple in the same place, or in the snake body
-newApple :: BoardInfo -> GameState -> (Point, StdGen)
-newApple bi app@(GameState ss x0 move sg) =
-    if x0' == x0 || x0' `inSnake` ss
-      then newApple bi app{randomGen = sg'}
-      else (x0', sg')
-  where (x0', sg') = makeRandomPoint bi sg
+newApple :: BoardInfo -> GameState -> (Point, GameState)
+newApple bi gstate@(GameState ss old_apple move sg) =
+    if new_apple == old_apple || new_apple `inSnake` ss
+      then newApple bi gstate'
+      else (new_apple, gstate'{applePosition = new_apple})
+  where (new_apple, gstate') = makeRandomPoint bi gstate
 {- We can't test this function because it depends on makeRandomPoint -}
 
+-- | move the snake's head forward without removing the tail. (This is the case of eating an apple)
+extendSnake ::  Point -> BoardInfo -> GameState -> (DeltaBoard, GameState)
+extendSnake new_head binfo gstate@(GameState (SnakeSeq old_head snake_body) _ _ _) = (delta, gstate {snakeSeq = new_snake})
+ where new_snake = SnakeSeq new_head (old_head :<| snake_body)
+       delta     = [(new_head, Board.SnakeHead), (old_head, Board.Snake)]
+
+
+-- | displace snake, that is: remove the tail and move the head forward (This is the case of not eating an apple)
+displaceSnake :: Point -> BoardInfo -> GameState -> (DeltaBoard, GameState)
+displaceSnake new_head binfo gstate@(GameState (SnakeSeq old_head snake_body) apple movement sg) =
+  case snake_body of
+    S.Empty -> let new_snake = SnakeSeq new_head S.empty
+                   delta = [(new_head, Board.SnakeHead), (old_head, Board.Empty)]
+                in (delta , gstate {snakeSeq = new_snake})
+    xs :|> t -> let new_snake = SnakeSeq new_head (old_head :<| xs)
+                    delta = [(new_head, Board.SnakeHead), (old_head, Board.Snake), (t, Board.Empty)]
+                 in (delta, gstate {snakeSeq = new_snake})
 
 -- | Moves the snake based on the current direction. It sends the adequate RenderMessage
 -- Notice that a delta board must include all modified cells in the movement.
@@ -125,45 +143,17 @@ newApple bi app@(GameState ss x0 move sg) =
 -- 
 
 move :: BoardInfo -> GameState -> ([Board.RenderMessage] , GameState)
-move bi s@(GameState (SnakeSeq oldHead sb) applePos _ g) =
-  if isColision
-    then ([Board.GameOver], s)
-    else 
-      case isEatingApple of
-        True ->
-          case sb of
-            S.Empty ->
-              let newSnake = SnakeSeq newHead (S.singleton oldHead)
-                  newState = s {snakeSeq = newSnake, applePosition = newApplePos, randomGen = g'}
-                  delta = [(newHead, Board.SnakeHead), (oldHead, Board.Snake), (newApplePos, Board.Apple)]
-              in ([Board.RenderBoard delta, Board.Score], newState)
-            xs ->
-              let newSnake = SnakeSeq newHead (oldHead :<| xs)
-                  newState = s {snakeSeq = newSnake, applePosition = newApplePos, randomGen = g'}
-                  delta = [(newHead, Board.SnakeHead), (oldHead, Board.Snake), (newApplePos, Board.Apple)]
-              in ([Board.RenderBoard delta, Board.Score], newState)
-        False ->
-          case sb of
-            S.Empty ->
-              let newSnake = SnakeSeq newHead S.empty
-                  newState = s {snakeSeq = newSnake}
-                  delta = [(newHead, Board.SnakeHead), (oldHead, Board.Empty)]
-              in ([Board.RenderBoard delta], newState)
-            x :<| S.Empty  ->
-              let newSnake = SnakeSeq newHead (S.singleton oldHead)
-                  newState = s {snakeSeq = newSnake}
-                  delta = [(newHead, Board.SnakeHead), (oldHead, Board.Snake), (x, Board.Empty)]
-              in ([Board.RenderBoard delta], newState)
-            x :<| (xs :|> t)  ->
-              let newSnake = SnakeSeq newHead (oldHead :<| x :<| xs)
-                  newState = s {snakeSeq = newSnake}
-                  delta = [(newHead, Board.SnakeHead), (oldHead, Board.Snake), (t, Board.Empty)]
-              in ([Board.RenderBoard delta], newState)
-
-  where newHead           = nextHead bi s
-        isColision        = newHead `elem` sb
+move bi gstate@(GameState s applePos _ _) =
+  if | isColision -> ([Board.GameOver], gstate)
+     | isEatingApple -> let (delta, gstate') = extendSnake newHead bi gstate
+                            (newApplePos, gstate'') = newApple bi gstate'
+                            delta' = (newApplePos, Board.Apple):delta
+                        in ([Board.RenderBoard delta', Board.Score], gstate'')
+     | otherwise -> let (delta, gstate') = displaceSnake newHead bi gstate 
+                    in ([Board.RenderBoard delta], gstate')
+  where newHead           = nextHead bi gstate
+        isColision        = newHead `inSnake` s
         isEatingApple     = newHead == applePos
-        (newApplePos, g') = newApple bi s
 {- This is a test for move. It should return
 
 RenderBoard [((1,4),SnakeHead),((1,1),Snake),((1,3),Empty)]
