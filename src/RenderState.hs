@@ -25,9 +25,13 @@ module RenderState where
 
 -- This are all imports you need. Feel free to import more things.
 import Data.Array ( (//), listArray, Array, elems )
-import Data.Foldable ( foldl' )
+import Control.Monad ( foldM_ )
+import Data.Foldable ( foldl', traverse_ )
 import qualified Data.ByteString.Builder as B
 import Data.ByteString.Builder (Builder)
+import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, ask)
+import Control.Monad.Trans.State.Strict (State, put, get, runState, evalState)
+import Control.Monad.Trans (lift)
 
 -- A point is just a tuple of integers.
 type Point = (Int, Int)
@@ -50,6 +54,8 @@ data RenderMessage = RenderBoard DeltaBoard | GameOver | Score
 
 -- | The RenderState contains the board and if the game is over or not.
 data RenderState   = RenderState {board :: Board, gameOver :: Bool, score :: Int} deriving Show
+
+type RenderStep a = ReaderT BoardInfo (State RenderState) a
 
 -- | Given The board info, this function should return a board with all Empty cells
 emptyGrid :: BoardInfo -> Board
@@ -80,12 +86,13 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 
 
 -- | Given tye current render state, and a message -> update the render state
-updateRenderState :: RenderState -> RenderMessage -> RenderState
-updateRenderState (RenderState b gOver s) message = 
+updateRenderState :: RenderMessage -> RenderStep ()
+updateRenderState message = do
+  (RenderState b gOver s) <- lift get
   case message of
-    RenderBoard delta -> RenderState (b // delta) gOver s
-    GameOver          -> RenderState b  True s
-    Score             -> RenderState b gOver (s+1)
+    RenderBoard delta -> lift . put $ RenderState (b // delta) gOver s
+    GameOver          -> lift . put $ RenderState b  True s
+    Score             -> lift . put $ RenderState b gOver (s+1)
 {-
 This is a test for updateRenderState
 
@@ -101,8 +108,8 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 -- >>> updateRenderState initial_board message1
 -- >>> updateRenderState initial_board message2
 
-updateMessages :: RenderState -> [RenderMessage] -> RenderState
-updateMessages = foldl' updateRenderState
+updateMessages :: [RenderMessage] -> RenderStep ()
+updateMessages = traverse_ updateRenderState
 
 -- | Pretry printer Score
 ppScore :: Int -> Builder
@@ -122,8 +129,8 @@ ppCell Apple     = "X "
 
 -- | convert the RenderState in a String ready to be flushed into the console.
 --   It should return the Board with a pretty look. If game over, return the empty board.
-render :: BoardInfo -> RenderState -> Builder
-render binf@(BoardInfo h w) (RenderState b gOver s) =
+buildBoard :: BoardInfo -> RenderState -> Builder
+buildBoard binf@(BoardInfo h w) (RenderState b gOver s) =
  if gOver
     then ppScore s <> fst (boardToString $ emptyGrid binf)
     else ppScore s <> fst (boardToString b)
@@ -145,3 +152,14 @@ Notice, that this depends on what you've chosen for ppCell
 -- >>> render_state = RenderState board  False
 -- >>> render board_info render_state
 -- "- - - - \n- 0 $ - \n- - - X \n"
+
+-- | runs one step in the render state: Process the messages and build the board with the resulting state
+renderStep :: [RenderMessage] -> RenderStep Builder
+renderStep msgs = do 
+  updateMessages msgs
+  binf <- ask
+  rstate <- lift get
+  pure $ buildBoard binf rstate
+
+render :: [RenderMessage] -> BoardInfo -> RenderState ->  (Builder, RenderState)
+render msgs = runState . runReaderT (renderStep msgs)

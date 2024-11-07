@@ -15,7 +15,7 @@ import EventQueue (
  )
 import GameState (GameState (movement), move, opositeMovement)
 import Initialization (gameInitialization)
-import RenderState (BoardInfo, RenderState (score, gameOver), render, updateMessages)
+import RenderState (BoardInfo, RenderState (score, gameOver), render)
 import System.Environment (getArgs)
 import System.IO (BufferMode (NoBuffering), hSetBinaryMode, hSetBuffering, hSetEcho, stdin, stdout)
 import qualified Data.ByteString.Builder as B
@@ -39,10 +39,10 @@ gameloop binf gstate rstate queue = do
             if movement gstate == opositeMovement m
               then move binf gstate
               else move binf $ gstate{movement = m}
-  let rstate' = updateMessages rstate delta
+  let (builder, rstate') = render delta binf rstate
       isGameOver = gameOver rstate'
   putStr "\ESC[2J" --This cleans the console screen
-  B.hPutBuilder stdout $ render binf rstate'
+  B.hPutBuilder stdout builder
   unless isGameOver $ gameloop binf gstate' rstate' queue
 
 -- | main.
