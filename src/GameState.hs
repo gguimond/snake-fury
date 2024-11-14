@@ -15,7 +15,6 @@ import Control.Monad.Trans.State.Strict (State, get, put, modify, gets, runState
 import Control.Monad.Trans.Reader (ReaderT (runReaderT), ask, runReader)
 import Control.Monad.Trans.Class ( MonadTrans(lift) )
 
-
 -- The movement is one of this.
 data Movement = North | South | East | West deriving (Show, Eq)
 
@@ -36,6 +35,10 @@ data GameState = GameState
   deriving (Show, Eq)
 
 type GameStep a = ReaderT BoardInfo (State GameState) a
+
+-- | The are two kind of events, a `ClockEvent`, representing movement which is not force by the user input, and `UserEvent` which is the opposite.
+data Event = Tick | UserEvent Movement
+
 
 -- | This function should calculate the opposite movement.
 opositeMovement :: Movement -> Movement
@@ -159,5 +162,10 @@ step = do
      | otherwise -> do delta <- displaceSnake newHead 
                        pure [Board.RenderBoard delta]
 
-move :: BoardInfo -> GameState -> ([Board.RenderMessage], GameState)
-move = runState . runReaderT step
+move :: Event -> BoardInfo -> GameState -> ([Board.RenderMessage], GameState)
+move Tick bi gstate = (runState . runReaderT step) bi gstate
+move (UserEvent m) bi gstate =
+  if movement gstate == opositeMovement m
+    then (runState . runReaderT step) bi gstate 
+    else (runState . runReaderT step) bi gstate{movement = m}
+
