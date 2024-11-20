@@ -1,4 +1,7 @@
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE InstanceSigs ,MultiParamTypeClasses #-}
+
 {-|
 This module defines the logic of the game and the communication with the `Board.RenderState`
 -}
@@ -11,9 +14,9 @@ import Data.Sequence ( Seq(..))
 import qualified Data.Sequence as S
 import System.Random ( uniformR, RandomGen(split), StdGen, Random (randomR), mkStdGen )
 import Data.Maybe (isJust)
-import Control.Monad.Trans.State.Strict (State, get, put, modify, gets, runState)
-import Control.Monad.Trans.Reader (ReaderT (runReaderT), ask, runReader)
-import Control.Monad.Trans.Class ( MonadTrans(lift) )
+import Control.Monad.Reader (ReaderT (runReaderT), ask, runReader, MonadReader (local), Reader)
+import Control.Monad.State.Strict (StateT, get, put, modify, gets, runStateT, MonadState, State, runState)
+import Control.Monad.RWS.Class (MonadState(state))
 
 -- The movement is one of this.
 data Movement = North | South | East | West deriving (Show, Eq)
@@ -34,7 +37,36 @@ data GameState = GameState
   }
   deriving (Show, Eq)
 
-type GameStep a = ReaderT BoardInfo (State GameState) a
+newtype GameStep m a = GameStep {runGameStep :: ReaderT BoardInfo (StateT GameState m) a}
+
+instance Functor m => Functor (GameStep m) where
+  -- if m is a Functor then (StateT GameState m) is a Functor, and so it is (ReaderT BoardInfo (StateT GameState m) 
+  -- Because GameStep is a silly wrapper aroung (ReaderT ...), in order to define fmap we just need to wrap-unwrap
+  fmap :: Functor m => (a -> b) -> GameStep m a -> GameStep m b
+  fmap f (GameStep r) = GameStep $ fmap f r 
+
+-- For applicative, is exactly the same.
+instance Monad m => Applicative (GameStep m) where
+  pure a = GameStep $ pure a
+  (GameStep f) <*> (GameStep r) = GameStep $ f <*> r 
+
+-- For Monad is a little bit tricker, but still easy. You just need to puzzle-up the types
+instance Monad m => Monad (GameStep m) where
+  (>>=) :: Monad m => GameStep m a -> (a -> GameStep m b) -> GameStep m b
+  (GameStep r) >>= f = GameStep $ r >>= (runGameStep . f)
+
+-- Notice you don't need to have MonadReader BoardInfo m, because m is the monad inside StateT. 
+-- The type in GameStep is already a (ReaderT BoardInfo ... ) so it is an instance of MonadReader BoardInfo
+-- as long as m is a monad
+instance Monad m => MonadReader BoardInfo (GameStep m) where 
+  ask :: Monad m => GameStep m BoardInfo
+  ask = GameStep ask
+  local :: Monad m => (BoardInfo -> BoardInfo) -> GameStep m a -> GameStep m a
+  local f (GameStep r) = GameStep $ local f r
+
+instance Monad m => MonadState GameState (GameStep m) where 
+  state :: Monad m => (GameState -> (a, GameState)) -> GameStep m a
+  state f = GameStep $ state f
 
 -- | The are two kind of events, a `ClockEvent`, representing movement which is not force by the user input, and `UserEvent` which is the opposite.
 data Event = Tick | UserEvent Movement
@@ -55,15 +87,15 @@ opositeMovement West = East
 -- | Purely creates a random point within the board limits
 --   You should take a look to System.Random documentation. 
 --   Also, in the import list you have all relevant functions.
-makeRandomPoint :: GameStep Point
+makeRandomPoint :: (MonadReader BoardInfo m, MonadState GameState m) =>  m Point
 makeRandomPoint = do
   BoardInfo n i <- ask
-  g <- lift $ gets randomGen
+  g <- gets randomGen
   let (g1, g2)  = split g
       (n', g1') = uniformR (1, n) g1
       (i', _) = uniformR (1, i) g2
       newPoint  = (n', i')
-  lift $ modify $ \x -> x{randomGen = g1'}
+  modify $ \x -> x{randomGen = g1'}
   pure newPoint
   
 {-
@@ -113,44 +145,44 @@ True
 
 
 -- | Calculates a new random apple, avoiding creating the apple in the same place, or in the snake body
-newApple :: GameStep Point
+newApple :: (MonadReader BoardInfo m, MonadState GameState m) =>  m Point
 newApple = do
   bi <- ask
-  GameState snake_body old_apple move sg <- lift get
+  GameState snake_body old_apple move sg <- get
   new_apple <- makeRandomPoint
   if new_apple == old_apple || new_apple `inSnake` snake_body
     then newApple
-    else lift (modify $ \x -> x{applePosition = new_apple}) >> pure new_apple
+    else modify (\x -> x{applePosition = new_apple}) >> pure new_apple
 
 {- We can't test this function because it depends on makeRandomPoint -}
 
 -- | move the snake's head forward without removing the tail. (This is the case of eating an apple)
-extendSnake :: Point -> GameStep DeltaBoard
+extendSnake :: (MonadReader BoardInfo m, MonadState GameState m) => Point -> m DeltaBoard
 extendSnake new_head = do
   binfo <- ask
-  SnakeSeq old_head snake_body <- lift $ gets snakeSeq
+  SnakeSeq old_head snake_body <- gets snakeSeq
   let new_snake = SnakeSeq new_head (old_head :<| snake_body)
       delta     = [(new_head, Board.SnakeHead), (old_head, Board.Snake)]
-  lift $ modify $ \gstate -> gstate{snakeSeq = new_snake}
+  modify $ \gstate -> gstate{snakeSeq = new_snake}
   pure delta
 
 -- | displace snake, that is: remove the tail and move the head forward (This is the case of not eating an apple)
-displaceSnake :: Point -> GameStep DeltaBoard
+displaceSnake :: (MonadReader BoardInfo m, MonadState GameState m) => Point -> m DeltaBoard
 displaceSnake new_head = do
   binfo <- ask
-  SnakeSeq old_head snake_body <- lift $ gets snakeSeq
+  SnakeSeq old_head snake_body <- gets snakeSeq
   case snake_body of
     S.Empty -> let new_snake = SnakeSeq new_head S.empty
                    delta = [(new_head, Board.SnakeHead), (old_head, Board.Empty)]
-                in lift (modify $ \x -> x{snakeSeq = new_snake}) >> pure delta
+                in modify (\x -> x{snakeSeq = new_snake}) >> pure delta
     xs :|> t -> let new_snake = SnakeSeq new_head (old_head :<| xs)
                     delta = [(new_head, Board.SnakeHead), (old_head, Board.Snake), (t, Board.Empty)]
-                 in lift (modify $ \x -> x{snakeSeq = new_snake}) >> pure delta
+                 in modify (\x -> x{snakeSeq = new_snake}) >> pure delta
 
-step :: GameStep [Board.RenderMessage]
+step :: (MonadReader BoardInfo m, MonadState GameState m) => m [Board.RenderMessage]
 step = do
   bi <- ask
-  gstate@(GameState s applePos _ _) <- lift get
+  gstate@(GameState s applePos _ _) <- get
   let newHead           = nextHead bi gstate
       isColision        = newHead `inSnake` s
       isEatingApple     = newHead == applePos
@@ -162,10 +194,12 @@ step = do
      | otherwise -> do delta <- displaceSnake newHead 
                        pure [Board.RenderBoard delta]
 
-move :: Event -> BoardInfo -> GameState -> ([Board.RenderMessage], GameState)
-move Tick bi gstate = (runState . runReaderT step) bi gstate
+move :: Monad m => Event -> BoardInfo -> GameState -> m ([Board.RenderMessage], GameState)
+move Tick bi gstate = runGameStep step `runReaderT` bi `runStateT` gstate
 move (UserEvent m) bi gstate =
   if movement gstate == opositeMovement m
-    then (runState . runReaderT step) bi gstate 
-    else (runState . runReaderT step) bi gstate{movement = m}
+    then runGameStep step `runReaderT` bi `runStateT` gstate
+    else runGameStep step `runReaderT` bi `runStateT` gstate{movement = m}
+
+ --   (runState . runReaderT step) bi gstate
 

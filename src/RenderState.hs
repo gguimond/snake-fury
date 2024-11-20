@@ -1,6 +1,10 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+
 
 
 {-|
@@ -24,14 +28,13 @@ Which would look like this:
 module RenderState where
 
 -- This are all imports you need. Feel free to import more things.
-import Data.Array ( (//), listArray, Array, elems )
-import Control.Monad ( foldM_ )
+import Data.Array ( (//), listArray, Array )
 import Data.Foldable ( foldl', traverse_ )
 import qualified Data.ByteString.Builder as B
 import Data.ByteString.Builder (Builder)
-import Control.Monad.Trans.Reader (ReaderT (runReaderT), asks, ask)
-import Control.Monad.Trans.State.Strict (State, put, get, runState, evalState)
-import Control.Monad.Trans (lift)
+import Control.Monad.Reader (ReaderT (runReaderT), ask, MonadReader)
+import Control.Monad.State.Strict (State, put, get, runState, evalState, MonadState, StateT (runStateT))
+
 
 -- A point is just a tuple of integers.
 type Point = (Int, Int)
@@ -55,7 +58,8 @@ data RenderMessage = RenderBoard DeltaBoard | GameOver | Score
 -- | The RenderState contains the board and if the game is over or not.
 data RenderState   = RenderState {board :: Board, gameOver :: Bool, score :: Int} deriving Show
 
-type RenderStep a = ReaderT BoardInfo (State RenderState) a
+newtype RenderStep m a = RenderStep {runRenderStep :: ReaderT BoardInfo (StateT RenderState m) a}
+  deriving newtype (Functor, Applicative, Monad, MonadState RenderState, MonadReader BoardInfo) 
 
 -- | Given The board info, this function should return a board with all Empty cells
 emptyGrid :: BoardInfo -> Board
@@ -86,13 +90,13 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 
 
 -- | Given tye current render state, and a message -> update the render state
-updateRenderState :: RenderMessage -> RenderStep ()
+updateRenderState :: (MonadReader BoardInfo m, MonadState RenderState m) => RenderMessage -> m ()
 updateRenderState message = do
-  (RenderState b gOver s) <- lift get
+  (RenderState b gOver s) <- get
   case message of
-    RenderBoard delta -> lift . put $ RenderState (b // delta) gOver s
-    GameOver          -> lift . put $ RenderState b  True s
-    Score             -> lift . put $ RenderState b gOver (s+1)
+    RenderBoard delta -> put $ RenderState (b // delta) gOver s
+    GameOver          -> put $ RenderState b  True s
+    Score             -> put $ RenderState b gOver (s+1)
 {-
 This is a test for updateRenderState
 
@@ -108,7 +112,7 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 -- >>> updateRenderState initial_board message1
 -- >>> updateRenderState initial_board message2
 
-updateMessages :: [RenderMessage] -> RenderStep ()
+updateMessages :: (MonadReader BoardInfo m, MonadState RenderState m) =>  [RenderMessage] -> m ()
 updateMessages = traverse_ updateRenderState
 
 -- | Pretry printer Score
@@ -154,12 +158,14 @@ Notice, that this depends on what you've chosen for ppCell
 -- "- - - - \n- 0 $ - \n- - - X \n"
 
 -- | runs one step in the render state: Process the messages and build the board with the resulting state
-renderStep :: [RenderMessage] -> RenderStep Builder
+renderStep :: (MonadReader BoardInfo m, MonadState RenderState m) => [RenderMessage] -> m Builder
 renderStep msgs = do 
   updateMessages msgs
   binf <- ask
-  rstate <- lift get
+  rstate <- get
   pure $ buildBoard binf rstate
 
-render :: [RenderMessage] -> BoardInfo -> RenderState ->  (Builder, RenderState)
-render msgs = runState . runReaderT (renderStep msgs)
+render :: Monad m => [RenderMessage] -> BoardInfo -> RenderState -> m (Builder, RenderState)
+render msgs = runStateT . runReaderT (runRenderStep . renderStep $ msgs)
+
+--runState . runReaderT (renderStep msgs)
