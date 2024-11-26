@@ -31,4 +31,4 @@ main = do
   -- Game Loop. We run two different threads, one for the gameloop (main) and one for user inputs.
   _ <- forkIO $ writeUserInput eventQueue
   let initialState = AppState gameState renderState
-  run (Env binf) initialState eventQueue
+  run (Env binf eventQueue) initialState

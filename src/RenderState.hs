@@ -170,9 +170,10 @@ renderStep msgs = do
   binf <- asks getBoardInfo
   rstate <- gets getRenderState
   pure $ buildBoard binf rstate
-
+{-
 render ::  (MonadReader env m, HasBoardInfo env, MonadState state m, HasRenderState state, MonadIO m) => [RenderMessage] -> m ()
 render msgs = do
   builder <- renderStep msgs
   liftIO $ putStr "\ESC[2J" --This cleans the console screen
   liftIO $ B.hPutBuilder stdout builder
+-}
