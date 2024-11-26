@@ -32,7 +32,7 @@ import Data.Array ( (//), listArray, Array )
 import Data.Foldable ( foldl', traverse_ )
 import qualified Data.ByteString.Builder as B
 import Data.ByteString.Builder (Builder)
-import Control.Monad.Reader (ReaderT (runReaderT), ask, MonadReader)
+import Control.Monad.Reader (ReaderT (runReaderT), asks, MonadReader)
 import Control.Monad.State.Strict (State, put, get, runState, evalState, MonadState, StateT (runStateT), gets, modify)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import System.IO (stdout)
@@ -64,6 +64,9 @@ class HasRenderState state where
   getRenderState :: state -> RenderState
   setRenderState :: state -> RenderState -> state
 
+class HasBoardInfo env where
+  getBoardInfo :: env -> BoardInfo
+
 -- | Given The board info, this function should return a board with all Empty cells
 emptyGrid :: BoardInfo -> Board
 emptyGrid (BoardInfo h w) = listArray boardBounds emptyCells
@@ -93,7 +96,7 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 
 
 -- | Given tye current render state, and a message -> update the render state
-updateRenderState :: (MonadReader BoardInfo m, MonadState state m, HasRenderState state)  => RenderMessage -> m ()
+updateRenderState :: (MonadReader env m, HasBoardInfo env, MonadState state m, HasRenderState state)  => RenderMessage -> m ()
 updateRenderState message = do
   (RenderState b gOver s) <- gets getRenderState
   case message of
@@ -115,7 +118,7 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 -- >>> updateRenderState initial_board message1
 -- >>> updateRenderState initial_board message2
 
-updateMessages :: (MonadReader BoardInfo m, MonadState state m, HasRenderState state) =>  [RenderMessage] -> m ()
+updateMessages :: (MonadReader env m, HasBoardInfo env, MonadState state m, HasRenderState state) =>  [RenderMessage] -> m ()
 updateMessages = traverse_ updateRenderState
 
 -- | Pretry printer Score
@@ -161,14 +164,14 @@ Notice, that this depends on what you've chosen for ppCell
 -- "- - - - \n- 0 $ - \n- - - X \n"
 
 -- | runs one step in the render state: Process the messages and build the board with the resulting state
-renderStep :: (MonadReader BoardInfo m, MonadState state m, HasRenderState state) => [RenderMessage] -> m Builder
+renderStep :: (MonadReader env m, HasBoardInfo env, MonadState state m, HasRenderState state) => [RenderMessage] -> m Builder
 renderStep msgs = do 
   updateMessages msgs
-  binf <- ask
+  binf <- asks getBoardInfo
   rstate <- gets getRenderState
   pure $ buildBoard binf rstate
 
-render ::  (MonadReader BoardInfo m, MonadState state m, HasRenderState state, MonadIO m) => [RenderMessage] -> m ()
+render ::  (MonadReader env m, HasBoardInfo env, MonadState state m, HasRenderState state, MonadIO m) => [RenderMessage] -> m ()
 render msgs = do
   builder <- renderStep msgs
   liftIO $ putStr "\ESC[2J" --This cleans the console screen

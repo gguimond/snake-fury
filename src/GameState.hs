@@ -8,13 +8,13 @@ This module defines the logic of the game and the communication with the `Board.
 module GameState where 
 
 -- These are all the import. Feel free to use more if needed.
-import RenderState (BoardInfo (..), Point, DeltaBoard)
+import RenderState (BoardInfo (..), Point, DeltaBoard, HasBoardInfo (getBoardInfo))
 import qualified RenderState as Board
 import Data.Sequence ( Seq(..))
 import qualified Data.Sequence as S
 import System.Random ( uniformR, RandomGen(split), StdGen, Random (randomR), mkStdGen )
 import Data.Maybe (isJust)
-import Control.Monad.Reader (ReaderT (runReaderT), ask, runReader, MonadReader (local), Reader)
+import Control.Monad.Reader (ReaderT (runReaderT), ask, asks, runReader, MonadReader (local), Reader)
 import Control.Monad.State.Strict (StateT, get, put, modify, gets, runStateT, MonadState, State, runState)
 import Control.Monad.RWS.Class (MonadState(state))
 
@@ -91,9 +91,9 @@ opositeMovement West = East
 -- | Purely creates a random point within the board limits
 --   You should take a look to System.Random documentation. 
 --   Also, in the import list you have all relevant functions.
-makeRandomPoint :: (MonadReader BoardInfo m, MonadState state m, HasGameState state) =>  m Point
+makeRandomPoint :: (MonadReader env m, HasBoardInfo env, MonadState state m, HasGameState state) =>  m Point
 makeRandomPoint = do
-  BoardInfo n i <- ask
+  BoardInfo n i <- asks getBoardInfo
   gstate        <- gets getGameState
   let (g1, g2)  = split (randomGen gstate)
       (n', g1') = uniformR (1, n) g1
@@ -149,7 +149,7 @@ True
 
 
 -- | Calculates a new random apple, avoiding creating the apple in the same place, or in the snake body
-newApple :: (MonadReader BoardInfo m, MonadState state m, HasGameState state) =>  m Point
+newApple :: (MonadReader env m, HasBoardInfo env, MonadState state m, HasGameState state) =>  m Point
 newApple = do
   bi <- ask
   gstate@(GameState snake_body old_apple move sg) <- gets getGameState
@@ -161,7 +161,7 @@ newApple = do
 {- We can't test this function because it depends on makeRandomPoint -}
 
 -- | move the snake's head forward without removing the tail. (This is the case of eating an apple)
-extendSnake :: (MonadReader BoardInfo m, MonadState state m, HasGameState state) => Point -> m DeltaBoard
+extendSnake :: (MonadReader env m, HasBoardInfo env, MonadState state m, HasGameState state) => Point -> m DeltaBoard
 extendSnake new_head = do
   binfo <- ask
   gstate <- gets getGameState
@@ -172,7 +172,7 @@ extendSnake new_head = do
   pure delta
 
 -- | displace snake, that is: remove the tail and move the head forward (This is the case of not eating an apple)
-displaceSnake :: (MonadReader BoardInfo m, MonadState state m, HasGameState state) => Point -> m DeltaBoard
+displaceSnake :: (MonadReader env m, HasBoardInfo env, MonadState state m, HasGameState state) => Point -> m DeltaBoard
 displaceSnake new_head = do
   binfo <- ask
   gstate <- gets getGameState
@@ -185,9 +185,9 @@ displaceSnake new_head = do
                     delta = [(new_head, Board.SnakeHead), (old_head, Board.Snake), (t, Board.Empty)]
                  in modify ( `setGameState` gstate{snakeSeq = new_snake}) >> pure delta
 
-step :: (MonadReader BoardInfo m, MonadState state m, HasGameState state) => m [Board.RenderMessage]
+step :: (MonadReader env m, HasBoardInfo env, MonadState state m, HasGameState state) => m [Board.RenderMessage]
 step = do
-  bi <- ask
+  bi <- asks getBoardInfo
   gstate@(GameState s applePos _ _) <- gets getGameState
   let newHead           = nextHead bi gstate
       isColision        = newHead `inSnake` s
@@ -200,7 +200,7 @@ step = do
      | otherwise -> do delta <- displaceSnake newHead 
                        pure [Board.RenderBoard delta]
 
-move ::  (MonadReader BoardInfo m, MonadState state m, HasGameState state) => Event -> m [Board.RenderMessage]
+move ::  (MonadReader env m, HasBoardInfo env, MonadState state m, HasGameState state) => Event -> m [Board.RenderMessage]
 move Tick = step
 move (UserEvent input_movement) = do
   gstate@(GameState _ _  current_movement _) <- gets getGameState
